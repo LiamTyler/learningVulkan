@@ -53,13 +53,32 @@ set(LIBS
     ${SYSTEM_LIBS}
 )
 
-set(LIB_DIRS
-    ${CMAKE_CURRENT_BINARY_DIR}/lib
-    C:/VulkanSDK/1.1.101.0/Lib
-)
+if (UNIX)
+    set(LIB_DIRS
+        ${CMAKE_CURRENT_BINARY_DIR}/lib
+    )
+
+    find_package(Vulkan REQUIRED)
+    #target_link_libraries(vulkaninfo Vulkan::Vulkan)
+    set(LIBS
+        glfw
+        Vulkan::Vulkan
+        ${SYSTEM_LIBS}
+    )
+else()
+    set(LIB_DIRS
+        ${CMAKE_CURRENT_BINARY_DIR}/lib
+        C:/VulkanSDK/1.1.101.0/Lib
+    )
+    set(LIBS
+        glfw
+        vulkan-1
+        ${SYSTEM_LIBS}
+    )
+endif()
 
 link_directories(${LIB_DIRS})
 include_directories(${INCLUDE_DIRS})
 
-add_executable(vulkan ${SRCS} ${HEADERS})
-target_link_libraries(vulkan ${LIBS})
+add_executable(app ${SRCS} ${HEADERS})
+target_link_libraries(app ${LIBS})
