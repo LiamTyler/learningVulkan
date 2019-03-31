@@ -3,6 +3,7 @@
 #include <set>
 #include <string>
 #include <iostream>
+#include <fstream>
 #include <algorithm>
 #include <cstring>
 
@@ -100,6 +101,30 @@ namespace graphics {
             }
         }
 
+        std::vector<char> readShader(const std::string& filename) {
+            std::ifstream file(filename, std::ios::ate | std::ios::binary);
+
+            if (!file)
+                return {};
+
+            size_t fileSize = (size_t) file.tellg();
+            std::vector<char> buffer(fileSize);
+            file.seekg(0);
+            file.read(buffer.data(), fileSize);
+            file.close();
+
+            return buffer;
+        }
+
+        bool createShaderModule(VkShaderModule& module, const std::vector<char>& code) {
+            VkShaderModuleCreateInfo createInfo = {};
+            createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+            createInfo.codeSize = code.size();
+            createInfo.pCode = (const uint32_t*) code.data();
+
+            return vkCreateShaderModule(logicalDevice, &createInfo, nullptr, &module) == VK_SUCCESS;
+        }
+
     } // namespace anonymous
 
     bool initVulkan(int sw, int sh) {
@@ -119,7 +144,7 @@ namespace graphics {
         }
 
         if (createInstance() && setupDebugCallback() && createSurface() && pickPhysicalDevice() &&
-            createLogicalDevice() && createSwapChain() && createImageViews())
+            createLogicalDevice() && createSwapChain() && createImageViews() && createGraphicsPipeline())
             return true;
 
         return false;
@@ -501,6 +526,37 @@ namespace graphics {
                 return false;
         }
         
+        return true;
+    }
+
+    bool createGraphicsPipeline() {
+        auto vertShaderCode = readShader("../shaders/vert.spv");
+        auto fragShaderCode = readShader("../shaders/frag.spv");
+        if (!vertShaderCode.size() || !fragShaderCode.size())
+            return false;
+
+        VkShaderModule vertShaderModule, fragShaderModule;
+        if (!createShaderModule(vertShaderModule, vertShaderCode) ||
+            !createShaderModule(fragShaderModule, fragShaderCode))
+            return false;
+
+        VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
+        vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+        vertShaderStageInfo.module = vertShaderModule;
+        vertShaderStageInfo.pName = "main";
+
+        VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
+        fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        fragShaderStageInfo.module = fragShaderModule;
+        fragShaderStageInfo.pName = "main";
+
+        VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
+
+        vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
+        vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
+
         return true;
     }
 

@@ -14,6 +14,7 @@ namespace graphics {
     bool createLogicalDevice();
     bool createSwapChain();
     bool createImageViews();
+    bool createGraphicsPipeline();
 
 
     // TODO: make private
