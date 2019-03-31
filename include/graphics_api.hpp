@@ -14,6 +14,7 @@ namespace graphics {
     bool createLogicalDevice();
     bool createSwapChain();
 
+    // TODO: make private
     extern GLFWwindow* window;
     extern int SW, SH;
     extern VkInstance instance;
@@ -23,6 +24,9 @@ namespace graphics {
     extern VkDevice logicalDevice;
     extern VkQueue graphicsQueue, presentQueue;
     extern VkSwapchainKHR swapChain;
+    extern std::vector<VkImage> swapChainImages;
+    extern VkFormat swapChainImageFormat;
+    extern VkExtent2D swapChainExtent;
 
 } // namespace graphics
 

@@ -25,6 +25,9 @@ namespace graphics {
     VkDevice logicalDevice;
     VkQueue graphicsQueue, presentQueue;
     VkSwapchainKHR swapChain;
+    std::vector<VkImage> swapChainImages;
+    VkFormat swapChainImageFormat;
+    VkExtent2D swapChainExtent;
 
     // helper functions
     namespace {
@@ -227,7 +230,6 @@ namespace graphics {
 
         uint32_t queueFamilyCount = 0;
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, nullptr);
-
 
         std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
         vkGetPhysicalDeviceQueueFamilyProperties(device, &queueFamilyCount, queueFamilies.data());
@@ -472,12 +474,12 @@ namespace graphics {
         if (vkCreateSwapchainKHR(logicalDevice, &createInfo, nullptr, &swapChain) != VK_SUCCESS)
             return false;
 
-        // vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, nullptr);
-        // swapChainImages.resize(imageCount);
-        // vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, swapChainImages.data());
+        vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, nullptr);
+        swapChainImages.resize(imageCount);
+        vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, swapChainImages.data());
 
-        // swapChainImageFormat = surfaceFormat.format;
-        // swapChainExtent = extent;
+        swapChainImageFormat = surfaceFormat.format;
+        swapChainExtent = extent;
         return true;
     }
 
