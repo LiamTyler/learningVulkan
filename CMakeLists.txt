@@ -19,17 +19,20 @@ add_subdirectory(ext/glfw)
 
 set(
     SRCS
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+    src/main.cpp
+    src/graphics_api.cpp
 )
 
 set(
     HEADERS
+    include/graphics_api.hpp
 )
 
 set(INCLUDE_DIRS
     ${CMAKE_CURRENT_SOURCE_DIR}/ext/
     ${CMAKE_CURRENT_SOURCE_DIR}/ext/glfw/include
     ${CMAKE_CURRENT_SOURCE_DIR}/include/
+    ${CMAKE_CURRENT_SOURCE_DIR}/
 )
 
 if (MSVC)
