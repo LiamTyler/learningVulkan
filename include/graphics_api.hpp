@@ -13,6 +13,8 @@ namespace graphics {
     bool pickPhysicalDevice();
     bool createLogicalDevice();
     bool createSwapChain();
+    bool createImageViews();
+
 
     // TODO: make private
     extern GLFWwindow* window;
@@ -27,6 +29,7 @@ namespace graphics {
     extern std::vector<VkImage> swapChainImages;
     extern VkFormat swapChainImageFormat;
     extern VkExtent2D swapChainExtent;
+    extern std::vector<VkImageView> swapChainImageViews;
 
 } // namespace graphics
 
