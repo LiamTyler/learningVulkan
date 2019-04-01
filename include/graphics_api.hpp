@@ -34,6 +34,7 @@ namespace graphics {
     extern std::vector<VkImageView> swapChainImageViews;
     extern VkRenderPass renderPass;
     extern VkPipelineLayout pipelineLayout;
+    extern VkPipeline graphicsPipeline;
 
 } // namespace graphics
 
