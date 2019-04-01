@@ -14,6 +14,7 @@ namespace graphics {
     bool createLogicalDevice();
     bool createSwapChain();
     bool createImageViews();
+    bool createRenderPass();
     bool createGraphicsPipeline();
 
 
@@ -31,6 +32,8 @@ namespace graphics {
     extern VkFormat swapChainImageFormat;
     extern VkExtent2D swapChainExtent;
     extern std::vector<VkImageView> swapChainImageViews;
+    extern VkRenderPass renderPass;
+    extern VkPipelineLayout pipelineLayout;
 
 } // namespace graphics
 
