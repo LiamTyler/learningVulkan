@@ -16,6 +16,9 @@ namespace graphics {
     bool createImageViews();
     bool createRenderPass();
     bool createGraphicsPipeline();
+    bool createFramebuffers();
+    bool createCommandPool();
+    bool createCommandBuffers();
 
 
     // TODO: make private
@@ -35,6 +38,9 @@ namespace graphics {
     extern VkRenderPass renderPass;
     extern VkPipelineLayout pipelineLayout;
     extern VkPipeline graphicsPipeline;
+    extern std::vector<VkFramebuffer> swapChainFramebuffers;
+    extern VkCommandPool commandPool;
+    extern std::vector<VkCommandBuffer> commandBuffers;
 
 } // namespace graphics
 

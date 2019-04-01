@@ -33,6 +33,9 @@ namespace graphics {
     VkRenderPass renderPass;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
+    std::vector<VkFramebuffer> swapChainFramebuffers;
+    VkCommandPool commandPool;
+    std::vector<VkCommandBuffer> commandBuffers;
 
     // helper functions
     namespace {
@@ -148,13 +151,17 @@ namespace graphics {
 
         if (createInstance() && setupDebugCallback() && createSurface() && pickPhysicalDevice() &&
             createLogicalDevice() && createSwapChain() && createImageViews() && createRenderPass() &&
-            createGraphicsPipeline())
+            createGraphicsPipeline() && createFramebuffers())
             return true;
 
         return false;
     }
 
     void cleanup() {
+        vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
+        for (auto framebuffer : swapChainFramebuffers) {
+            vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
+        }
         vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
         vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
         vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
@@ -703,6 +710,45 @@ namespace graphics {
         vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
 
         return true;
+    }
+
+    bool createFramebuffers() {
+        swapChainFramebuffers.resize(swapChainImageViews.size());
+
+        for (size_t i = 0; i < swapChainImageViews.size(); ++i) {
+            VkImageView attachments[] = {
+                swapChainImageViews[i]
+            };
+
+            VkFramebufferCreateInfo framebufferInfo = {};
+            framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+            framebufferInfo.renderPass = renderPass;
+            framebufferInfo.attachmentCount = 1;
+            framebufferInfo.pAttachments = attachments;
+            framebufferInfo.width = swapChainExtent.width;
+            framebufferInfo.height = swapChainExtent.height;
+            framebufferInfo.layers = 1;
+
+            if (vkCreateFramebuffer(logicalDevice, &framebufferInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS)
+                return false;
+        }
+
+        return true;
+    }
+
+    bool createCommandPool() {
+        auto queueFamilyIndices = findQueueFamilies(physicalDevice, surface);
+
+        VkCommandPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily;
+        poolInfo.flags = 0;
+
+        return vkCreateCommandPool(logicalDevice, &poolInfo, nullptr, &commandPool) == VK_SUCCESS;
+    }
+
+    bool createCommandBuffers() {
+        commandBuffers.resize(swapChainFramebuffers.size());
     }
 
 } // namespace graphics
