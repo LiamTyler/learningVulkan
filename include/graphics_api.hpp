@@ -7,6 +7,8 @@ namespace graphics {
     bool initVulkan(int screenWidth, int screenHeight);
     void cleanup();
 
+    bool drawFrame();
+
     bool createInstance();
     bool setupDebugCallback();
     bool createSurface();
@@ -19,6 +21,7 @@ namespace graphics {
     bool createFramebuffers();
     bool createCommandPool();
     bool createCommandBuffers();
+    bool createSyncObjects();
 
 
     // TODO: make private
@@ -41,6 +44,10 @@ namespace graphics {
     extern std::vector<VkFramebuffer> swapChainFramebuffers;
     extern VkCommandPool commandPool;
     extern std::vector<VkCommandBuffer> commandBuffers;
+    extern std::vector<VkSemaphore> imageAvailableSemaphores;
+    extern std::vector<VkSemaphore> renderFinishedSemaphores;
+    extern std::vector<VkFence> inFlightFences;
+    extern size_t currentFrame;
 
 } // namespace graphics
 

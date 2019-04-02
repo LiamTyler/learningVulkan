@@ -5,7 +5,6 @@
 
 #include "graphics_api.hpp"
 
-
 int main() {
 
     graphics::initVulkan(800, 600);
@@ -14,6 +13,8 @@ int main() {
         glfwPollEvents();
         if (glfwGetKey(graphics::window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
             glfwSetWindowShouldClose(graphics::window, true);
+
+        graphics::drawFrame();
     }
 
     graphics::cleanup();
