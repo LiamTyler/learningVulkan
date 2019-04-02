@@ -7,12 +7,15 @@
 #include <algorithm>
 #include <cstring>
 
+bool enableValidationLayers = true;
+
+// the standard layer enables a bunch of useful diagnostic layers
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_LUNARG_standard_validation"
 };
 
 const std::vector<const char*> deviceExtensions = {
-    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME "1"
 };
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -46,22 +49,19 @@ namespace graphics {
     // helper functions
     namespace {
 
-        bool checkValidationLayersPresent(const std::vector<const char*>& layers) {
-            if (!layers.size())
-                return true;
-
-            // query for available layers
+        /** Returns a list of the requested layers that cannot be found. */
+        std::vector<std::string> findMissingValidationLayers(const std::vector<const char*>& layers) {
             uint32_t layerCount;
             vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
-
             std::vector<VkLayerProperties> availableLayers(layerCount);
             vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.data());
 
-            //std::cout << "Available validation layers:" << std::endl;
-            //for (const auto& layerProperties : availableLayers) {
-            //    std::cout << "\t" << layerProperties.layerName << std::endl;
-            //}
+            // std::cout << "Available validation layers:" << std::endl;
+            // for (const auto& layerProperties : availableLayers) {
+            //     std::cout << "\t" << layerProperties.layerName << std::endl;
+            // }
 
+            std::vector<std::string> missingLayerList;
             // check if all the desired validation layers are available
             for (const auto& layerName : layers) {
                 bool layerFound = false;
@@ -74,10 +74,40 @@ namespace graphics {
                 }
 
                 if (!layerFound)
-                    return false;
+                    missingLayerList.push_back(layerName);
             }
 
-            return true;
+            return missingLayerList;
+        }
+
+        /** Returns a list of the requested extensions that cannot be found. */
+        std::vector<std::string> findMissingExtensions(const std::vector<const char*>& extensions) {
+            uint32_t extensionCount = 0;
+            vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
+            std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+            vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, availableExtensions.data());
+
+            // std::cout << "available extensions:" << std::endl;
+            // for (const auto& extension : availableExtensions) {
+            //     std::cout << "\t" << extension.extensionName << std::endl;
+            // }
+
+            std::vector<std::string> missingExtensionList;
+            for (const auto& extName : extensions) {
+                bool extFound = false;
+
+                for (const auto& extProperties : availableExtensions) {
+                    if (strcmp(extName, extProperties.extensionName) == 0) {
+                        extFound = true;
+                        break;
+                    }
+                }
+
+                if (!extFound)
+                    missingExtensionList.push_back(extName);
+            }
+
+            return missingExtensionList;
         }
 
         static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
@@ -94,6 +124,9 @@ namespace graphics {
             return VK_FALSE;
         }
 
+        /** Since the createDebugUtilsMessenger function is from an extension, it is not loaded
+         * automatically. Look up its address manually and call it.
+         */
         bool CreateDebugUtilsMessengerEXT(const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
                                           const VkAllocationCallbacks* pAllocator)
         {
@@ -106,6 +139,8 @@ namespace graphics {
             }
         }
 
+        /** Same thing as the CreateDebugUtilsMessenger; load the function manually and call it
+         */
         void DestroyDebugUtilsMessengerEXT(const VkAllocationCallbacks* pAllocator) {
             auto func = (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
             if (func != nullptr) {
@@ -165,6 +200,7 @@ namespace graphics {
     }
 
     void cleanup() {
+        // the nullptr arguments are the deallocators if using a custom allocator
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
             vkDestroySemaphore(logicalDevice, imageAvailableSemaphores[i], nullptr);
@@ -191,14 +227,18 @@ namespace graphics {
         glfwTerminate();
     }
 
+    /** \brief Initializes the Vulkan library, extensions, and layers.
+     *
+     * The application uses the Vulkan library, aka 'loader'. Creating an instance initializes the
+     * loader, the 0 or more global validation layers, and the underlying vendor driver.
+     */
     bool createInstance() {
-        if (!checkValidationLayersPresent(validationLayers)) {
-            std::cout << "One or more validation layer unavailable" << std::endl;
-            return false;
-        }
-        // struct that holds info about our application. Optional, but can help driver optimize sometimes
+        // struct that holds info about our application. Mainly used by some layers / drivers
+        // for labeling debug messages, logging, etc. Possible for drivers to run differently
+        // depending on the application that is running.
         VkApplicationInfo appInfo = {};
         appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+        appInfo.pNext = nullptr; // pointer to extension information
         appInfo.pApplicationName = "Hello Triangle";
         appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
         appInfo.pEngineName = "No Engine";
@@ -210,53 +250,57 @@ namespace graphics {
         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
         createInfo.pApplicationInfo = &appInfo;
 
-        // Vulkan by itself doesn't know how to any platform things, so we do need extensions.
-        // Specifically, we at least need the ones to interface with the windowing API, so ask
-        // glfw for the extensions needed for this. Also the debug utils layer to print out layer messages
+        // Vulkan by itself doesn't know how to do any platform specifc things, so we do need
+        // extensions. Specifically, we at least need the ones to interface with the windowing API,
+        // so ask glfw for the extensions needed for this. These are global to the program.
         uint32_t glfwExtensionCount = 0;
         const char** glfwExtensions;
 
         glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-
         std::vector<const char*> extensionNames(glfwExtensions, glfwExtensions + glfwExtensionCount);
+
+        // Also want the debug utils extension so we can print out layer messages
         extensionNames.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 
         createInfo.enabledExtensionCount = static_cast<uint32_t>(extensionNames.size());
         createInfo.ppEnabledExtensionNames = extensionNames.data();
-        std::cout << "extensions needed" << std::endl;
-        for (size_t i = 0; i < extensionNames.size(); i++)
-            std::cout << "\t" << extensionNames[i] << std::endl;
+        // std::cout << "extensions needed" << std::endl;
+        // for (size_t i = 0; i < extensionNames.size(); i++)
+        //     std::cout << "\t" << extensionNames[i] << std::endl;
 
-        // how many global validation layers
-        if (validationLayers.size()) {
+        // Specify global validation layers
+        if (enableValidationLayers) {
             createInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
             createInfo.ppEnabledLayerNames = validationLayers.data();
         } else {
             createInfo.enabledLayerCount = 0;
         }
 
-        // query, and then print the available extensions
-        uint32_t extensionCount = 0;
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, nullptr);
-        std::vector<VkExtensionProperties> extensions(extensionCount);
-        vkEnumerateInstanceExtensionProperties(nullptr, &extensionCount, extensions.data());
-
-        std::cout << "available extensions:" << std::endl;
-        for (const auto& extension : extensions) {
-            std::cout << "\t" << extension.extensionName << std::endl;
+        auto ret = vkCreateInstance(&createInfo, nullptr, &instance);
+        if (ret == VK_ERROR_EXTENSION_NOT_PRESENT) {
+            std::cout << "Could not find the following extensions: " << std::endl;
+            auto missingExtensions = findMissingExtensions(extensionNames);
+            for (const auto& ext : missingExtensions)
+                std::cout << "\t" << ext << std::endl;;
+        } else if (ret == VK_ERROR_LAYER_NOT_PRESENT) {
+            auto missingLayers = findMissingValidationLayers(validationLayers);
+            std::cout << "Could not find the following validation layers: " << std::endl;
+            for (const auto& layer : missingLayers)
+                std::cout << "\t" << layer << std::endl;
         }
-
-        return vkCreateInstance(&createInfo, nullptr, &instance) == VK_SUCCESS;
+        return ret == VK_SUCCESS;
     }
 
-
+    /** \brief Gives validation layers a way to give their debug messages back to our program.
+     */
     bool setupDebugCallback() {
         VkDebugUtilsMessengerCreateInfoEXT createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
         createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT |
             VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
             VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-        // | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT; // general verbose debug info
+            // | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT; // general verbose debug info
+        
         createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
         createInfo.pfnUserCallback = debugCallback;
         createInfo.pUserData = nullptr; // Optional

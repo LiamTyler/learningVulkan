@@ -7,7 +7,8 @@
 
 int main() {
 
-    graphics::initVulkan(800, 600);
+    if (!graphics::initVulkan(800, 600))
+        return EXIT_FAILURE;
 
     while(!glfwWindowShouldClose(graphics::window)) {
         glfwPollEvents();
