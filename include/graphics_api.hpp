@@ -23,6 +23,20 @@ namespace graphics {
     bool createCommandBuffers();
     bool createSyncObjects();
 
+    struct QueueFamilyIndices {
+        uint32_t graphicsFamily = -1;
+        uint32_t presentFamily = -1;
+
+        bool isComplete() const {
+            return graphicsFamily != -1 && presentFamily != -1;
+        }
+    };
+
+    struct PhysicalDeviceInfo {
+        VkPhysicalDevice device;
+        int score;
+        QueueFamilyIndices indices;
+    };
 
     // TODO: make private
     extern GLFWwindow* window;
@@ -30,7 +44,7 @@ namespace graphics {
     extern VkInstance instance;
     extern VkDebugUtilsMessengerEXT debugMessenger;
     extern VkSurfaceKHR surface;
-    extern VkPhysicalDevice physicalDevice;
+    extern PhysicalDeviceInfo physicalDeviceInfo;
     extern VkDevice logicalDevice;
     extern VkQueue graphicsQueue, presentQueue;
     extern VkSwapchainKHR swapChain;
