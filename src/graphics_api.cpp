@@ -45,6 +45,7 @@ namespace graphics {
     std::vector<VkSemaphore> renderFinishedSemaphores;
     std::vector<VkFence> inFlightFences;
     size_t currentFrame = 0;
+    bool framebufferResized = false;
 
     // helper functions
     namespace {
@@ -155,7 +156,7 @@ namespace graphics {
             return indices;
         }
 
-        bool checkPhysicalDeviceExtensionSupport(VkPhysicalDevice device) {.
+        bool checkPhysicalDeviceExtensionSupport(VkPhysicalDevice device) {
             uint32_t extensionCount;
             vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
 
@@ -177,7 +178,7 @@ namespace graphics {
             std::vector<VkPresentModeKHR> presentModes;
         };
 
-        /** See what swap chain capabilities, formats, and modes this physical device supports.
+        /** See what swap chain capabilities, formats, and modes this physical device supports. */
         SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
             SwapChainSupportDetails details;
 
@@ -234,6 +235,7 @@ namespace graphics {
             return score;
         }
 
+        /** Load a SPIR-V shader from the specified full path. */
         std::vector<char> readShader(const std::string& filename) {
             std::ifstream file(filename, std::ios::ate | std::ios::binary);
 
@@ -249,6 +251,9 @@ namespace graphics {
             return buffer;
         }
 
+        /** Have to wrap the shader bytecode in a VkShaderModule. Compilation and linking does not
+         * happen until the graphics pipeline is created.
+         */
         bool createShaderModule(VkShaderModule& module, const std::vector<char>& code) {
             VkShaderModuleCreateInfo createInfo = {};
             createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -259,6 +264,11 @@ namespace graphics {
         }
 
     } // namespace anonymous
+
+    static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
+        std::cout << "resized to: " << width << " " << height << std::endl;
+        framebufferResized = true;
+    }
 
     bool initVulkan(int sw, int sh) {
         SW = sw;
@@ -271,6 +281,7 @@ namespace graphics {
         // tell glfw not to create an opengl context (like it normally does)
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
         window = glfwCreateWindow(SW, SH, "Vulkan window", nullptr, nullptr);
+        glfwSetFramebufferSizeCallback(window, framebufferResizeCallback);
         if (!window) {
             std::cout << "Failed to create GLFW window" << std::endl;
             return false;
@@ -285,7 +296,11 @@ namespace graphics {
         return false;
     }
 
+    
+
     void cleanup() {
+        cleanupSwapChain();
+
         // the nullptr arguments are the deallocators if using a custom allocator
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
             vkDestroySemaphore(logicalDevice, renderFinishedSemaphores[i], nullptr);
@@ -294,17 +309,6 @@ namespace graphics {
         }
 
         vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
-        for (auto framebuffer : swapChainFramebuffers) {
-            vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
-        }
-        vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
-        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
-        vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
-
-        for (auto imageView : swapChainImageViews)
-            vkDestroyImageView(logicalDevice, imageView, nullptr);
-
-        vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
         vkDestroyDevice(logicalDevice, nullptr);
         vkDestroySurfaceKHR(instance, surface, nullptr);
         DestroyDebugUtilsMessengerEXT(nullptr);
@@ -418,13 +422,19 @@ namespace graphics {
     }
 
     /** Select the resolution of the swap image. Almost always == window size.*/
-    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, uint32_t width, uint32_t height) {
+    VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities) {
         // check if the driver specified the size already
         if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
             return capabilities.currentExtent;
         } else {
             // select the closest feasible resolution possible to the window size
-            VkExtent2D actualExtent = {width, height};
+            glfwGetFramebufferSize(window, &SW, &SH);
+
+            VkExtent2D actualExtent = {
+                static_cast<uint32_t>(SW),
+                static_cast<uint32_t>(SH)
+            };
+
             actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
             actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
 
@@ -525,7 +535,7 @@ namespace graphics {
 
         VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
         VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
-        VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities, SW, SH);
+        VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
 
         uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
         if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount) {
@@ -575,6 +585,11 @@ namespace graphics {
         return true;
     }
 
+    /** \brief Create the image views for the swapchain images.
+    *
+    * A VkImageView to use any VkImage (including the swap chain ones). They specify how to access
+    * the image, and which part of the image to access.
+    */
     bool createImageViews() {
         swapChainImageViews.resize(swapChainImages.size());
 
@@ -582,12 +597,14 @@ namespace graphics {
             VkImageViewCreateInfo createInfo = {};
             createInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
             createInfo.image = swapChainImages[i];
-            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+            createInfo.viewType = VK_IMAGE_VIEW_TYPE_2D; // type of image
             createInfo.format = swapChainImageFormat;
             createInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
             createInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
             createInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
             createInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+            // specify image purpose and which part to access
             createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
             createInfo.subresourceRange.baseMipLevel = 0;
             createInfo.subresourceRange.levelCount = 1;
@@ -601,11 +618,15 @@ namespace graphics {
         return true;
     }
 
+    /** \brief Create the render pass for the framebuffer attachments being used
+     *
+     * The render pass specifies each attachment, and how they should be used during operations.
+     */
     bool createRenderPass() {
         // currently just one color attachment
         VkAttachmentDescription colorAttachment = {};
         colorAttachment.format = swapChainImageFormat;
-        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+        colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT; // used later for multisampling
         colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         // no stencil currently
@@ -619,11 +640,15 @@ namespace graphics {
         colorAttachmentRef.attachment = 0;
         colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
+        
         VkSubpassDescription subpass = {};
         subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         subpass.colorAttachmentCount = 1;
         subpass.pColorAttachments = &colorAttachmentRef;
 
+        // 2 implicit dependencies for subpasses: start and end of render pass
+        // the start of the render pass. At the start of the render pass the image actually hasnt
+        // been acquired for use yet, so need to wait (dependency) on the color attachment stage
         VkSubpassDependency dependency = {};
         dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
         dependency.dstSubpass = 0;
@@ -638,7 +663,6 @@ namespace graphics {
         renderPassInfo.pAttachments = &colorAttachment;
         renderPassInfo.subpassCount = 1;
         renderPassInfo.pSubpasses = &subpass;
-
         renderPassInfo.dependencyCount = 1;
         renderPassInfo.pDependencies = &dependency;
 
@@ -656,11 +680,12 @@ namespace graphics {
             !createShaderModule(fragShaderModule, fragShaderCode))
             return false;
 
+        // assign shaders to a specific pipeline stage
         VkPipelineShaderStageCreateInfo vertShaderStageInfo = {};
         vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
         vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
         vertShaderStageInfo.module = vertShaderModule;
-        vertShaderStageInfo.pName = "main";
+        vertShaderStageInfo.pName = "main"; // entry point 
 
         VkPipelineShaderStageCreateInfo fragShaderStageInfo = {};
         fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -670,18 +695,23 @@ namespace graphics {
 
         VkPipelineShaderStageCreateInfo shaderStages[] = {vertShaderStageInfo, fragShaderStageInfo};
 
+        // specify the format of the vertex data being passed into the vertex shader
+        // bindings: spacing between data, and whether its per-vertex or per-instance
+        // attributes: type of them, which binding to load them from, and at which offset
         VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
         vertexInputInfo.vertexBindingDescriptionCount = 0;
-        vertexInputInfo.pVertexBindingDescriptions = nullptr; // Optional
+        vertexInputInfo.pVertexBindingDescriptions = nullptr;
         vertexInputInfo.vertexAttributeDescriptionCount = 0;
-        vertexInputInfo.pVertexAttributeDescriptions = nullptr; // Optional
+        vertexInputInfo.pVertexAttributeDescriptions = nullptr;
 
+        // specify topology and if primitive restart is on
         VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
         inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
         inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
         inputAssembly.primitiveRestartEnable = VK_FALSE;
 
+        // specify viewport and scissor, then combine into a ViewportState
         VkViewport viewport = {};
         viewport.x = 0.0f;
         viewport.y = 0.0f;
@@ -701,14 +731,17 @@ namespace graphics {
         viewportState.scissorCount = 1;
         viewportState.pScissors = &scissor;
 
+        // rasterizer does rasterization, depth testing, face culling, and scissor test 
         VkPipelineRasterizationStateCreateInfo rasterizer = {};
         rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-        rasterizer.depthClampEnable = VK_FALSE;
+        rasterizer.depthClampEnable = VK_FALSE; // can clamp to near and far plane instead
         rasterizer.rasterizerDiscardEnable = VK_FALSE;
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-        rasterizer.lineWidth = 1.0f;
+        rasterizer.lineWidth = 1.0f; // anything thicker than 1 needs the wideLines GPU feature
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
         rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+        // can also alter the depth values, which could help for shadow mapping
         rasterizer.depthBiasEnable = VK_FALSE;
         rasterizer.depthBiasConstantFactor = 0.0f; // Optional
         rasterizer.depthBiasClamp = 0.0f; // Optional
@@ -724,7 +757,7 @@ namespace graphics {
         multisampling.alphaToCoverageEnable = VK_FALSE; // Optional
         multisampling.alphaToOneEnable = VK_FALSE; // Optional
 
-        // no depth or stencil buffer
+        // no depth or stencil buffer currently
 
         // blending for single attachment
         VkPipelineColorBlendAttachmentState colorBlendAttachment = {};
@@ -751,7 +784,6 @@ namespace graphics {
         pipelineLayoutInfo.setLayoutCount = 0;
         pipelineLayoutInfo.pushConstantRangeCount = 0;
 
-
         if (vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
             return false;
 
@@ -767,7 +799,6 @@ namespace graphics {
         pipelineInfo.pDepthStencilState = nullptr;
         pipelineInfo.pColorBlendState = &colorBlending;
         pipelineInfo.pDynamicState = nullptr;
-
         pipelineInfo.layout = pipelineLayout;
         pipelineInfo.renderPass = renderPass;
         pipelineInfo.subpass = 0;
@@ -776,13 +807,17 @@ namespace graphics {
         if (vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, 1, &pipelineInfo, nullptr, &graphicsPipeline) != VK_SUCCESS)
             return false;
 
-
         vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
         vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
 
         return true;
     }
 
+    /** \brief Create a framebuffer for each of the swap chain images.
+     *
+     * To actually bind the swap chain images, they need to be wrapped into a VkFramebuffer.
+     * A framebuffer references all of the views for each attachment. Currently only one (color)
+     */
     bool createFramebuffers() {
         swapChainFramebuffers.resize(swapChainImageViews.size());
 
@@ -807,15 +842,24 @@ namespace graphics {
         return true;
     }
 
+    /** \brief Create the command pool for the command buffers.
+     *
+     * The command pool manages the memory for the command buffers, and the buffers are allocated
+     * from it. Each pool can only allocate buffers that are submitted on a single type of queue.
+     */
     bool createCommandPool() {
         VkCommandPoolCreateInfo poolInfo = {};
         poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
         poolInfo.queueFamilyIndex = physicalDeviceInfo.indices.graphicsFamily;
-        poolInfo.flags = 0;
+        poolInfo.flags = 0; // optimization hints when doing rerecording of command buffers 
 
         return vkCreateCommandPool(logicalDevice, &poolInfo, nullptr, &commandPool) == VK_SUCCESS;
     }
 
+    /** \brief Create a command buffer for each framebuffer.
+     *
+     * Need a buffer for each framebuffer. This also currently records the draw operations too.
+     */
     bool createCommandBuffers() {
         commandBuffers.resize(swapChainFramebuffers.size());
 
@@ -829,6 +873,7 @@ namespace graphics {
             return false;
 
         for (size_t i = 0; i < commandBuffers.size(); i++) {
+            // being recording
             VkCommandBufferBeginInfo beginInfo = {};
             beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
             beginInfo.flags = VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT;
@@ -837,6 +882,7 @@ namespace graphics {
             if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS)
                 return false;
 
+            // specify which render pass, which framebuffer, where shader loads start, and size
             VkRenderPassBeginInfo renderPassInfo = {};
             renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
             renderPassInfo.renderPass = renderPass;
@@ -848,6 +894,7 @@ namespace graphics {
             renderPassInfo.clearValueCount = 1;
             renderPassInfo.pClearValues = &clearColor;
 
+            // submit commands: start pass, bind pipeline, draw, end pass
             vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
             vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
@@ -859,6 +906,10 @@ namespace graphics {
         return true;
     }
 
+    /** Need to create synchronization objects to stop finish rendering a frame before going to the
+     * next. Create semaphores for each frame, so that the GPU can work on more than 1 frame, but
+     * also while bounding the amount of work to MAX_FRAMES_IN_FLIGHT
+     */
     bool createSyncObjects() {
         imageAvailableSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
         renderFinishedSemaphores.resize(MAX_FRAMES_IN_FLIGHT);
@@ -867,6 +918,8 @@ namespace graphics {
         VkSemaphoreCreateInfo semaphoreInfo = {};
         semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
+        // need a fence to actually block the CPU from submitting more than MAX_FRAMES_IN_FLIGHT
+        // to the GPU
         VkFenceCreateInfo fenceInfo = {};
         fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
         fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
@@ -884,16 +937,68 @@ namespace graphics {
         return true;
     }
 
+    /** Destroy the current swap chain and all of its resources. */
+    void cleanupSwapChain() {
+        for (size_t i = 0; i < swapChainFramebuffers.size(); i++) {
+            vkDestroyFramebuffer(logicalDevice, swapChainFramebuffers[i], nullptr);
+        }
+
+        vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
+
+        vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
+        vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
+        vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
+
+        for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+            vkDestroyImageView(logicalDevice, swapChainImageViews[i], nullptr);
+        }
+
+        vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
+    }
+
+    /** \brief Recreate the swap chain when it becomes invalid.
+     *
+     * The swap chain can become invalid from operations such as window resizing.
+     */
+    void recreateSwapChain() {
+        SW = 0; SH = 0;
+        while (SW == 0 || SH == 0) {
+            glfwGetFramebufferSize(window, &SW, &SH);
+            std::cout << "waiting: " << SW << " " << SH << std::endl;
+            glfwWaitEvents();
+        }
+
+        vkDeviceWaitIdle(logicalDevice);
+
+        cleanupSwapChain();
+
+        createSwapChain();
+        createImageViews(); // because of new images and image sizes
+        createRenderPass(); // because this relies on the image formats (rare that it changes)
+        createGraphicsPipeline(); // viewport and scissor size change (could handle w/dynamic state)
+        createFramebuffers(); // directly relies on swap images
+        createCommandBuffers(); // directly relies on swap images
+    }
+
     bool drawFrame() {
         vkWaitForFences(logicalDevice, 1, &inFlightFences[currentFrame], VK_TRUE, std::numeric_limits<uint64_t>::max());
-        vkResetFences(logicalDevice, 1, &inFlightFences[currentFrame]);
 
+        // get the next image in the swap chain
         uint32_t imageIndex;
-        vkAcquireNextImageKHR(logicalDevice, swapChain, std::numeric_limits<uint64_t>::max(),
+        VkResult result = vkAcquireNextImageKHR(logicalDevice, swapChain, std::numeric_limits<uint64_t>::max(),
                               imageAvailableSemaphores[currentFrame], VK_NULL_HANDLE, &imageIndex);
+        
+        if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+            recreateSwapChain();
+            return true;
+        } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+            return false;
+        }
+        
+        // queue submission and synchronization done with VkSubmitInfo
         VkSubmitInfo submitInfo = {};
         submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-
+        // which semaphore to wait on before execution begins, and where to wait
         VkSemaphore waitSemaphores[] = {imageAvailableSemaphores[currentFrame]};
         VkPipelineStageFlags waitStages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
         submitInfo.waitSemaphoreCount = 1;
@@ -901,14 +1006,17 @@ namespace graphics {
         submitInfo.pWaitDstStageMask = waitStages;
         submitInfo.commandBufferCount = 1;
         submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
-
+        // which semaphore to signal once the command buffer(s) are complete
         VkSemaphore signalSemaphores[] = {renderFinishedSemaphores[currentFrame]};
         submitInfo.signalSemaphoreCount = 1;
         submitInfo.pSignalSemaphores = signalSemaphores;
 
+        vkResetFences(logicalDevice, 1, &inFlightFences[currentFrame]);
+
         if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrame]) != VK_SUCCESS)
             return false;
 
+        // specify what swap chain to present the result to, and what to wait on before presenting
         VkPresentInfoKHR presentInfo = {};
         presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
         presentInfo.waitSemaphoreCount = 1;
@@ -919,7 +1027,13 @@ namespace graphics {
         presentInfo.pSwapchains = swapChains;
         presentInfo.pImageIndices = &imageIndex;
 
-        vkQueuePresentKHR(presentQueue, &presentInfo);
+        result = vkQueuePresentKHR(presentQueue, &presentInfo);
+        if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebufferResized) {
+            framebufferResized = false;
+            recreateSwapChain();
+        } else if (result != VK_SUCCESS) {
+            return false;
+        }
 
         currentFrame = (currentFrame + 1) % MAX_FRAMES_IN_FLIGHT;
 

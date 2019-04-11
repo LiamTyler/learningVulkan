@@ -22,6 +22,9 @@ namespace graphics {
     bool createCommandPool();
     bool createCommandBuffers();
     bool createSyncObjects();
+    void cleanupSwapChain();
+    void recreateSwapChain();
+
 
     struct QueueFamilyIndices {
         uint32_t graphicsFamily = -1;
@@ -62,6 +65,7 @@ namespace graphics {
     extern std::vector<VkSemaphore> renderFinishedSemaphores;
     extern std::vector<VkFence> inFlightFences;
     extern size_t currentFrame;
+    extern bool framebufferResized;
 
 } // namespace graphics
 
