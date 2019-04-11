@@ -116,8 +116,9 @@ namespace graphics {
         }
 
         /** \brief Find and select the first avaiable queues for graphics and presentation
-        * Queues are where commands get submitted. Some queues might only be usable for certain
-        * operations. Currently we just need 1 queue for graphics commands, and 1 queue for
+        * Queues are where commands get submitted to and are processed asynchronously. Some queues
+        * might only be usable for certain operations, like graphics or memory operations.
+        * Currently we just need 1 queue for graphics commands, and 1 queue for
         * presenting the images we create to the surface.
         */
         QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device, VkSurfaceKHR surface) {
@@ -131,10 +132,12 @@ namespace graphics {
 
             int i = 0;
             for (const auto& queueFamily : queueFamilies) {
+                // check if the queue supports graphics operations
                 if (queueFamily.queueCount > 0 && queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                     indices.graphicsFamily = i;
                 }
 
+                // check if the queue supports presenting images to the surface
                 VkBool32 presentSupport = false;
                 vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &presentSupport);
 
@@ -152,7 +155,7 @@ namespace graphics {
             return indices;
         }
 
-        bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
+        bool checkPhysicalDeviceExtensionSupport(VkPhysicalDevice device) {.
             uint32_t extensionCount;
             vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
 
@@ -174,6 +177,7 @@ namespace graphics {
             std::vector<VkPresentModeKHR> presentModes;
         };
 
+        /** See what swap chain capabilities, formats, and modes this physical device supports.
         SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device, VkSurfaceKHR surface) {
             SwapChainSupportDetails details;
 
@@ -205,7 +209,7 @@ namespace graphics {
         int ratePhysicalDevice(const PhysicalDeviceInfo& deviceInfo) {
             // check the required features first: queueFamilies, extension support,
             // and swap chain support
-            bool extensionsSupported = checkDeviceExtensionSupport(deviceInfo.device);
+            bool extensionsSupported = checkPhysicalDeviceExtensionSupport(deviceInfo.device);
 
             bool swapChainAdequate = false;
             if (extensionsSupported) {
@@ -413,12 +417,14 @@ namespace graphics {
         return physicalDeviceInfo.score > 0;
     }
 
+    /** Select the resolution of the swap image. Almost always == window size.*/
     VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities, uint32_t width, uint32_t height) {
+        // check if the driver specified the size already
         if (capabilities.currentExtent.width != std::numeric_limits<uint32_t>::max()) {
             return capabilities.currentExtent;
         } else {
+            // select the closest feasible resolution possible to the window size
             VkExtent2D actualExtent = {width, height};
-
             actualExtent.width = std::max(capabilities.minImageExtent.width, std::min(capabilities.maxImageExtent.width, actualExtent.width));
             actualExtent.height = std::max(capabilities.minImageExtent.height, std::min(capabilities.maxImageExtent.height, actualExtent.height));
 
@@ -426,6 +432,11 @@ namespace graphics {
         }
     }
 
+    /** \brief Select which swap surface present mode to use from the list of available modes.
+     *
+     * A presentation mode is the condition when swapping images to the screen. I.e: double
+     * buffering, triple buffering, etc.
+     */
     VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes) {
         VkPresentModeKHR bestMode = VK_PRESENT_MODE_FIFO_KHR;
 
@@ -440,11 +451,17 @@ namespace graphics {
         return bestMode;
     }
 
+    /** \brief Select which swap surface format to use from the list of available formats.
+     *
+     * A surface format is composed of the color format you work in, and the color space.
+     */
     VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats) {
+        // check if the surface has no preferred format (best case)
         if (availableFormats.size() == 1 && availableFormats[0].format == VK_FORMAT_UNDEFINED) {
             return { VK_FORMAT_B8G8R8A8_UNORM, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR };
         }
 
+        // look for the format we want
         for (const auto& availableFormat : availableFormats) {
             if (availableFormat.format == VK_FORMAT_B8G8R8A8_UNORM && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
                 return availableFormat;
@@ -455,6 +472,11 @@ namespace graphics {
         return availableFormats[0];
     }
 
+    /** \brief Creates a logical device for the currently selected physicalDevice.
+     *
+     * This also creates the queues, using the available queueFamilies that were queried earlier.
+     * Device validation layers are deprecated, but device extensions are handled here.
+     */
     bool createLogicalDevice() {
         const auto& indices = physicalDeviceInfo.indices;
         VkPhysicalDeviceFeatures deviceFeatures = {};
@@ -473,12 +495,9 @@ namespace graphics {
 
         VkDeviceCreateInfo createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
         createInfo.pQueueCreateInfos = queueCreateInfos.data();
-        
         createInfo.pEnabledFeatures = &deviceFeatures;
-
         createInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
         createInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
@@ -491,7 +510,12 @@ namespace graphics {
         return true;
     }
 
-    /** Vulkan surface is platform agnostic, but its creation isn't. Create it using GLFW. */
+    /** \brief Creates the vulkan surface using GLFW in a platform agnostic way.
+     *
+     * Vulkan is platform agnostic, so it doesn't interface directly with windows on its own.
+     * Use the VK_KHR_surface extension to get the VkSurfaceKHR object, and create it with GLFW.
+     * This must be done right after instance creation because it affects physical device selection
+     */
     bool createSurface() {
         return glfwCreateWindowSurface(instance, window, nullptr, &surface) == VK_SUCCESS;
     }
@@ -511,17 +535,17 @@ namespace graphics {
         VkSwapchainCreateInfoKHR createInfo = {};
         createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
         createInfo.surface = surface;
-
         createInfo.minImageCount = imageCount;
         createInfo.imageFormat = surfaceFormat.format;
         createInfo.imageColorSpace = surfaceFormat.colorSpace;
         createInfo.imageExtent = extent;
-        createInfo.imageArrayLayers = 1;
+        createInfo.imageArrayLayers = 1; // always 1 unless doing VR
         createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
         const auto& indices = physicalDeviceInfo.indices;
         uint32_t queueFamilyIndices[] = {indices.graphicsFamily, indices.presentFamily};
 
+        // specify how to handle images that are accessed by multiple queues
         if (indices.graphicsFamily != indices.presentFamily) {
             createInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
             createInfo.queueFamilyIndexCount = 2;
@@ -530,11 +554,13 @@ namespace graphics {
             createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
         }
 
+        // can specify transforms to happen (90 rotation, horizontal flip, etc). None used for now
         createInfo.preTransform = swapChainSupport.capabilities.currentTransform;
         createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
         createInfo.presentMode = presentMode;
         createInfo.clipped = VK_TRUE;
 
+        // only applies if you have to create a new swap chain (like on window resizing)
         createInfo.oldSwapchain = VK_NULL_HANDLE;
 
         if (vkCreateSwapchainKHR(logicalDevice, &createInfo, nullptr, &swapChain) != VK_SUCCESS)
