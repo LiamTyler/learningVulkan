@@ -24,6 +24,7 @@ namespace graphics {
     bool createFramebuffers();
     bool createCommandPool();
     bool createVertexBuffer();
+    bool createIndexBuffer();
     bool createCommandBuffers();
     bool createSyncObjects();
     void cleanupSwapChain();
@@ -72,6 +73,8 @@ namespace graphics {
     extern bool framebufferResized;
     extern VkBuffer vertexBuffer;
     extern VkDeviceMemory vertexBufferMemory;
+    extern VkBuffer indexBuffer;
+    extern VkDeviceMemory indexBufferMemory;
 
 } // namespace graphics
 

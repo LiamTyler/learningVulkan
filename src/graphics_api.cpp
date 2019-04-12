@@ -49,9 +49,14 @@ struct Vertex {
 };
 
 const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}},
-    {{0.5f,  0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}}
+    {{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f,  -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}},
+};
+
+const std::vector<uint16_t> indices = {
+    0, 1, 2, 2, 3, 0
 };
 
 namespace graphics {
@@ -82,6 +87,8 @@ namespace graphics {
     bool framebufferResized = false;
     VkBuffer vertexBuffer;
     VkDeviceMemory vertexBufferMemory;
+    VkBuffer indexBuffer;
+    VkDeviceMemory indexBufferMemory;
 
     // helper functions
     namespace {
@@ -299,6 +306,92 @@ namespace graphics {
             return vkCreateShaderModule(logicalDevice, &createInfo, nullptr, &module) == VK_SUCCESS;
         }
 
+        bool findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, uint32_t& index) {
+            VkPhysicalDeviceMemoryProperties memProperties;
+            vkGetPhysicalDeviceMemoryProperties(physicalDeviceInfo.device, &memProperties);
+            // return the first suitable memory type found
+            for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+                if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties)
+                        == properties)
+                {
+                    index = i;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+                VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
+        {
+            VkBufferCreateInfo bufferInfo = {};
+            bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+            bufferInfo.size = size;
+            bufferInfo.usage = usage;
+            bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            bufferInfo.flags = 0; // for sparse buffer memory, not relevent right now
+
+            if (vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &buffer) != VK_SUCCESS)
+                return false;
+
+            VkMemoryRequirements memRequirements;
+            vkGetBufferMemoryRequirements(logicalDevice, buffer, &memRequirements);
+
+            VkMemoryAllocateInfo allocInfo = {};
+            allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+            allocInfo.allocationSize = memRequirements.size;
+            uint32_t index;
+            if (!findMemoryType(memRequirements.memoryTypeBits, properties, index))
+                return false;
+            allocInfo.memoryTypeIndex = index;
+
+            if (vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &bufferMemory) != VK_SUCCESS)
+                return false;
+            vkBindBufferMemory(logicalDevice, buffer, bufferMemory, 0);
+
+            return true;
+        }
+
+        /** \brief Copies size bytes from one buffer to another.
+         *
+         * NOTE: Look into a better way to do this. Seems unnecessary that a new command buffer
+         * needs to be allocated every time a buffer needs to be copied
+         */
+        void copyBuffer(VkBuffer srcBuffer, VkBuffer dstBuffer, VkDeviceSize size) {
+            // memory transfer operations use command buffers, just like draw operations 
+            VkCommandBufferAllocateInfo allocInfo = {};
+            allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocInfo.commandPool = commandPool;
+            allocInfo.commandBufferCount = 1;
+            VkCommandBuffer commandBuffer;
+            vkAllocateCommandBuffers(logicalDevice, &allocInfo, &commandBuffer);
+
+            // start recording 
+            VkCommandBufferBeginInfo beginInfo = {};
+            beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+            // copy
+            VkBufferCopy copyRegion = {};
+            copyRegion.srcOffset = 0;
+            copyRegion.dstOffset = 0;
+            copyRegion.size = size;
+            vkCmdCopyBuffer(commandBuffer, srcBuffer, dstBuffer, 1, &copyRegion);
+            vkEndCommandBuffer(commandBuffer);
+
+            VkSubmitInfo submitInfo = {};
+            submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+            submitInfo.commandBufferCount = 1;
+            submitInfo.pCommandBuffers = &commandBuffer;
+
+            // graphics queue is implicitly capable of doing memory transfer operations
+            vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+            vkQueueWaitIdle(graphicsQueue);
+            vkFreeCommandBuffers(logicalDevice, commandPool, 1, &commandBuffer);
+        }
+
     } // namespace anonymous
 
     static void framebufferResizeCallback(GLFWwindow* window, int width, int height) {
@@ -326,7 +419,7 @@ namespace graphics {
         if (createInstance() && setupDebugCallback() && createSurface() && pickPhysicalDevice() &&
             createLogicalDevice() && createSwapChain() && createImageViews() && createRenderPass() &&
             createGraphicsPipeline() && createFramebuffers() && createCommandPool() &&
-            createVertexBuffer() && createCommandBuffers() && createSyncObjects())
+            createVertexBuffer() && createIndexBuffer() && createCommandBuffers() && createSyncObjects())
             return true;
 
         return false;
@@ -338,6 +431,8 @@ namespace graphics {
         cleanupSwapChain();
         vkDestroyBuffer(logicalDevice, vertexBuffer, nullptr);
         vkFreeMemory(logicalDevice, vertexBufferMemory, nullptr);
+        vkDestroyBuffer(logicalDevice, indexBuffer, nullptr);
+        vkFreeMemory(logicalDevice, indexBufferMemory, nullptr);
 
         // the nullptr arguments are the deallocators if using a custom allocator
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -897,57 +992,58 @@ namespace graphics {
         return vkCreateCommandPool(logicalDevice, &poolInfo, nullptr, &commandPool) == VK_SUCCESS;
     }
 
-    bool findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, uint32_t& index) {
-        VkPhysicalDeviceMemoryProperties memProperties;
-        vkGetPhysicalDeviceMemoryProperties(physicalDeviceInfo.device, &memProperties);
-        // return the first suitable memory type found
-        for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
-            if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties)
-                    == properties)
-            {
-                index = i;
-                return true;
-            }
-        }
-        return false;
-    }
-
+    // Note: In a real work application, you're not supposed to call vkAllocateMemory for each
+    // individual buffer. Fine for now, but should use a custom allocator.
     bool createVertexBuffer() {
-        VkBufferCreateInfo bufferInfo = {};
-        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-        bufferInfo.size = sizeof(vertices[0]) * vertices.size();
-        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        bufferInfo.flags = 0; // for sparse buffer memory, not relevent right now
+        VkDeviceSize bufferSize = sizeof(vertices[0]) * vertices.size();
 
-        if (vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS)
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        if (!createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory))
             return false;
-
-        // even though the buffer has been created, its memory hasn't been allocated yet
-        VkMemoryRequirements memRequirements;
-        vkGetBufferMemoryRequirements(logicalDevice, vertexBuffer, &memRequirements);
-        VkMemoryAllocateInfo allocInfo = {};
-        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-        allocInfo.allocationSize = memRequirements.size;
-        uint32_t index;
-        if (!findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-                    | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, index))
-        {
-            return false;
-        }
-        allocInfo.memoryTypeIndex = index;
-
-        if (vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS)
-            return false;
-
-        vkBindBufferMemory(logicalDevice, vertexBuffer, vertexBufferMemory, 0);
 
         // actually fill the buffer with data. Note that coherent host/gpu memory is a little
         // slower, than flushing when needed, but doesnt really matter
         void* data;
-        vkMapMemory(logicalDevice, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
-        memcpy(data, vertices.data(), (size_t) bufferInfo.size);
-        vkUnmapMemory(logicalDevice, vertexBufferMemory);
+        vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, vertices.data(), (size_t) bufferSize);
+        vkUnmapMemory(logicalDevice, stagingBufferMemory);
+
+        if (!createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory))
+            return false;
+
+        copyBuffer(stagingBuffer, vertexBuffer, bufferSize);
+        vkDestroyBuffer(logicalDevice, stagingBuffer, nullptr);
+        vkFreeMemory(logicalDevice, stagingBufferMemory, nullptr);
+
+        return true;
+    }
+
+    bool createIndexBuffer() {
+        VkDeviceSize bufferSize = sizeof(indices[0]) * indices.size();
+
+        VkBuffer stagingBuffer;
+        VkDeviceMemory stagingBufferMemory;
+        if (!createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory))
+            return false;
+
+        // actually fill the buffer with data. Note that coherent host/gpu memory is a little
+        // slower, than flushing when needed, but doesnt really matter
+        void* data;
+        vkMapMemory(logicalDevice, stagingBufferMemory, 0, bufferSize, 0, &data);
+        memcpy(data, indices.data(), (size_t) bufferSize);
+        vkUnmapMemory(logicalDevice, stagingBufferMemory);
+
+        if (!createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+                    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indexBuffer, indexBufferMemory))
+            return false;
+
+        copyBuffer(stagingBuffer, indexBuffer, bufferSize);
+        vkDestroyBuffer(logicalDevice, stagingBuffer, nullptr);
+        vkFreeMemory(logicalDevice, stagingBufferMemory, nullptr);
 
         return true;
     }
@@ -996,7 +1092,9 @@ namespace graphics {
             VkBuffer vertexBuffers[] = {vertexBuffer};
             VkDeviceSize offsets[] = {0};
             vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
-            vkCmdDraw(commandBuffers[i], vertices.size(), 1, 0, 0);
+            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+            // vkCmdDraw(commandBuffers[i], vertices.size(), 1, 0, 0);
+            vkCmdDrawIndexed(commandBuffers[i], indices.size(), 1, 0, 0, 0);
             vkCmdEndRenderPass(commandBuffers[i]);
             if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS)
                 return false;
