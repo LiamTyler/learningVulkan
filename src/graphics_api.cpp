@@ -20,6 +20,40 @@ const std::vector<const char*> deviceExtensions = {
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
+struct Vertex {
+    glm::vec3 pos;
+    glm::vec3 color;
+
+    static VkVertexInputBindingDescription getBindingDescription() {
+        VkVertexInputBindingDescription bindingDescription = {};
+        bindingDescription.binding = 0;
+        bindingDescription.stride = sizeof(Vertex);
+        bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        return bindingDescription;
+    }
+
+    static std::array<VkVertexInputAttributeDescription, 2> getAttributeDescriptions() {
+        std::array<VkVertexInputAttributeDescription, 2> attributeDescriptions = {};
+        attributeDescriptions[0].binding = 0;
+        attributeDescriptions[0].location = 0;
+        attributeDescriptions[0].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[0].offset = offsetof(Vertex, pos);
+        attributeDescriptions[1].binding = 0;
+        attributeDescriptions[1].location = 1;
+        attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+        attributeDescriptions[1].offset = offsetof(Vertex, color);
+
+        return attributeDescriptions;
+    }
+};
+
+const std::vector<Vertex> vertices = {
+    {{0.0f, -0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}},
+    {{0.5f,  0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}}
+};
+
 namespace graphics {
 
     GLFWwindow* window = nullptr;
@@ -46,6 +80,8 @@ namespace graphics {
     std::vector<VkFence> inFlightFences;
     size_t currentFrame = 0;
     bool framebufferResized = false;
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
 
     // helper functions
     namespace {
@@ -290,7 +326,7 @@ namespace graphics {
         if (createInstance() && setupDebugCallback() && createSurface() && pickPhysicalDevice() &&
             createLogicalDevice() && createSwapChain() && createImageViews() && createRenderPass() &&
             createGraphicsPipeline() && createFramebuffers() && createCommandPool() &&
-            createCommandBuffers() && createSyncObjects())
+            createVertexBuffer() && createCommandBuffers() && createSyncObjects())
             return true;
 
         return false;
@@ -300,6 +336,8 @@ namespace graphics {
 
     void cleanup() {
         cleanupSwapChain();
+        vkDestroyBuffer(logicalDevice, vertexBuffer, nullptr);
+        vkFreeMemory(logicalDevice, vertexBufferMemory, nullptr);
 
         // the nullptr arguments are the deallocators if using a custom allocator
         for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
@@ -700,10 +738,13 @@ namespace graphics {
         // attributes: type of them, which binding to load them from, and at which offset
         VkPipelineVertexInputStateCreateInfo vertexInputInfo = {};
         vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-        vertexInputInfo.vertexBindingDescriptionCount = 0;
-        vertexInputInfo.pVertexBindingDescriptions = nullptr;
-        vertexInputInfo.vertexAttributeDescriptionCount = 0;
-        vertexInputInfo.pVertexAttributeDescriptions = nullptr;
+        auto bindingDescription = Vertex::getBindingDescription();
+        auto attributeDescriptions = Vertex::getAttributeDescriptions();
+
+        vertexInputInfo.vertexBindingDescriptionCount = 1;
+        vertexInputInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attributeDescriptions.size());
+        vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+        vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions.data();
 
         // specify topology and if primitive restart is on
         VkPipelineInputAssemblyStateCreateInfo inputAssembly = {};
@@ -856,6 +897,61 @@ namespace graphics {
         return vkCreateCommandPool(logicalDevice, &poolInfo, nullptr, &commandPool) == VK_SUCCESS;
     }
 
+    bool findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties, uint32_t& index) {
+        VkPhysicalDeviceMemoryProperties memProperties;
+        vkGetPhysicalDeviceMemoryProperties(physicalDeviceInfo.device, &memProperties);
+        // return the first suitable memory type found
+        for (uint32_t i = 0; i < memProperties.memoryTypeCount; ++i) {
+            if (typeFilter & (1 << i) && (memProperties.memoryTypes[i].propertyFlags & properties)
+                    == properties)
+            {
+                index = i;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool createVertexBuffer() {
+        VkBufferCreateInfo bufferInfo = {};
+        bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+        bufferInfo.size = sizeof(vertices[0]) * vertices.size();
+        bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+        bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        bufferInfo.flags = 0; // for sparse buffer memory, not relevent right now
+
+        if (vkCreateBuffer(logicalDevice, &bufferInfo, nullptr, &vertexBuffer) != VK_SUCCESS)
+            return false;
+
+        // even though the buffer has been created, its memory hasn't been allocated yet
+        VkMemoryRequirements memRequirements;
+        vkGetBufferMemoryRequirements(logicalDevice, vertexBuffer, &memRequirements);
+        VkMemoryAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+        allocInfo.allocationSize = memRequirements.size;
+        uint32_t index;
+        if (!findMemoryType(memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+                    | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, index))
+        {
+            return false;
+        }
+        allocInfo.memoryTypeIndex = index;
+
+        if (vkAllocateMemory(logicalDevice, &allocInfo, nullptr, &vertexBufferMemory) != VK_SUCCESS)
+            return false;
+
+        vkBindBufferMemory(logicalDevice, vertexBuffer, vertexBufferMemory, 0);
+
+        // actually fill the buffer with data. Note that coherent host/gpu memory is a little
+        // slower, than flushing when needed, but doesnt really matter
+        void* data;
+        vkMapMemory(logicalDevice, vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+        memcpy(data, vertices.data(), (size_t) bufferInfo.size);
+        vkUnmapMemory(logicalDevice, vertexBufferMemory);
+
+        return true;
+    }
+
     /** \brief Create a command buffer for each framebuffer.
      *
      * Need a buffer for each framebuffer. This also currently records the draw operations too.
@@ -897,7 +993,10 @@ namespace graphics {
             // submit commands: start pass, bind pipeline, draw, end pass
             vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
             vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-            vkCmdDraw(commandBuffers[i], 3, 1, 0, 0);
+            VkBuffer vertexBuffers[] = {vertexBuffer};
+            VkDeviceSize offsets[] = {0};
+            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+            vkCmdDraw(commandBuffers[i], vertices.size(), 1, 0, 0);
             vkCmdEndRenderPass(commandBuffers[i]);
             if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS)
                 return false;

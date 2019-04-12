@@ -1,6 +1,9 @@
 #define GLFW_INCLUDE_VULKAN
 #include "GLFW/glfw3.h"
+#include "glm/glm.hpp"
+#include "glm/ext.hpp"
 #include <vector>
+#include <array>
 
 namespace graphics {
 
@@ -20,6 +23,7 @@ namespace graphics {
     bool createGraphicsPipeline();
     bool createFramebuffers();
     bool createCommandPool();
+    bool createVertexBuffer();
     bool createCommandBuffers();
     bool createSyncObjects();
     void cleanupSwapChain();
@@ -66,6 +70,8 @@ namespace graphics {
     extern std::vector<VkFence> inFlightFences;
     extern size_t currentFrame;
     extern bool framebufferResized;
+    extern VkBuffer vertexBuffer;
+    extern VkDeviceMemory vertexBufferMemory;
 
 } // namespace graphics
 
