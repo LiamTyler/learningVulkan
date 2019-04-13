@@ -1,5 +1,6 @@
 #define GLFW_INCLUDE_VULKAN
 #include "GLFW/glfw3.h"
+#define GLM_FORCE_RADIANS
 #include "glm/glm.hpp"
 #include "glm/ext.hpp"
 #include <vector>
@@ -20,11 +21,13 @@ namespace graphics {
     bool createSwapChain();
     bool createImageViews();
     bool createRenderPass();
+    bool createDescriptorSetLayout();
     bool createGraphicsPipeline();
     bool createFramebuffers();
     bool createCommandPool();
     bool createVertexBuffer();
     bool createIndexBuffer();
+    bool createUniformBuffers();
     bool createCommandBuffers();
     bool createSyncObjects();
     void cleanupSwapChain();
@@ -61,6 +64,7 @@ namespace graphics {
     extern VkExtent2D swapChainExtent;
     extern std::vector<VkImageView> swapChainImageViews;
     extern VkRenderPass renderPass;
+    extern VkDescriptorSetLayout descriptorSetLayout;
     extern VkPipelineLayout pipelineLayout;
     extern VkPipeline graphicsPipeline;
     extern std::vector<VkFramebuffer> swapChainFramebuffers;
@@ -75,6 +79,9 @@ namespace graphics {
     extern VkDeviceMemory vertexBufferMemory;
     extern VkBuffer indexBuffer;
     extern VkDeviceMemory indexBufferMemory;
+    extern std::vector<VkBuffer> uniformBuffers;
+    extern std::vector<VkDeviceMemory> uniformBuffersMemory;
+
 
 } // namespace graphics
 

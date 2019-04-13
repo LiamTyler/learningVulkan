@@ -6,6 +6,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cstring>
+#include <chrono>
 
 bool enableValidationLayers = true;
 
@@ -59,6 +60,12 @@ const std::vector<uint16_t> indices = {
     0, 1, 2, 2, 3, 0
 };
 
+struct UBO {
+    glm::mat4 model;
+    glm::mat4 view;
+    glm::mat4 proj;
+};
+
 namespace graphics {
 
     GLFWwindow* window = nullptr;
@@ -75,6 +82,7 @@ namespace graphics {
     VkExtent2D swapChainExtent;
     std::vector<VkImageView> swapChainImageViews;
     VkRenderPass renderPass;
+    VkDescriptorSetLayout descriptorSetLayout;
     VkPipelineLayout pipelineLayout;
     VkPipeline graphicsPipeline;
     std::vector<VkFramebuffer> swapChainFramebuffers;
@@ -89,6 +97,8 @@ namespace graphics {
     VkDeviceMemory vertexBufferMemory;
     VkBuffer indexBuffer;
     VkDeviceMemory indexBufferMemory;
+    std::vector<VkBuffer> uniformBuffers;
+    std::vector<VkDeviceMemory> uniformBuffersMemory;
 
     // helper functions
     namespace {
@@ -418,8 +428,9 @@ namespace graphics {
 
         if (createInstance() && setupDebugCallback() && createSurface() && pickPhysicalDevice() &&
             createLogicalDevice() && createSwapChain() && createImageViews() && createRenderPass() &&
-            createGraphicsPipeline() && createFramebuffers() && createCommandPool() &&
-            createVertexBuffer() && createIndexBuffer() && createCommandBuffers() && createSyncObjects())
+            createDescriptorSetLayout() && createGraphicsPipeline() && createFramebuffers() &&
+            createCommandPool() && createVertexBuffer() && createIndexBuffer() && createUniformBuffers() &&
+            createCommandBuffers() && createSyncObjects())
             return true;
 
         return false;
@@ -429,6 +440,7 @@ namespace graphics {
 
     void cleanup() {
         cleanupSwapChain();
+        vkDestroyDescriptorSetLayout(logicalDevice, descriptorSetLayout, nullptr);
         vkDestroyBuffer(logicalDevice, vertexBuffer, nullptr);
         vkFreeMemory(logicalDevice, vertexBufferMemory, nullptr);
         vkDestroyBuffer(logicalDevice, indexBuffer, nullptr);
@@ -802,6 +814,21 @@ namespace graphics {
         return vkCreateRenderPass(logicalDevice, &renderPassInfo, nullptr, &renderPass) == VK_SUCCESS;
     }
 
+    bool createDescriptorSetLayout() {
+        VkDescriptorSetLayoutBinding uboLayoutBinding = {};
+        uboLayoutBinding.binding = 0; // must match the layout(uniform = _) in the shader
+        uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        uboLayoutBinding.binding = 1; // not an array (same thing as 1 element array)
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; // which stages it is accessed
+        uboLayoutBinding.pImmutableSamplers = nullptr; // only relevent for image related stuff
+        VkDescriptorSetLayoutCreateInfo layoutInfo = {};
+        layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        layoutInfo.bindingCount = 1;
+        layoutInfo.pBindings = &uboLayoutBinding;
+
+        return vkCreateDescriptorSetLayout(logicalDevice, &layoutInfo, nullptr, &descriptorSetLayout) == VK_SUCCESS;
+    }
+
     bool createGraphicsPipeline() {
         auto vertShaderCode = readShader("../shaders/vert.spv");
         auto fragShaderCode = readShader("../shaders/frag.spv");
@@ -917,7 +944,8 @@ namespace graphics {
         // pipeline layout where you specify uniforms (none currently)
         VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-        pipelineLayoutInfo.setLayoutCount = 0;
+        pipelineLayoutInfo.setLayoutCount = 1;
+        pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
         pipelineLayoutInfo.pushConstantRangeCount = 0;
 
         if (vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
@@ -1048,6 +1076,19 @@ namespace graphics {
         return true;
     }
 
+    bool createUniformBuffers() {
+        VkDeviceSize bufferSize = sizeof(UBO);
+        uniformBuffers.resize(swapChainImages.size());
+        uniformBuffersMemory.resize(swapChainImages.size());
+
+        for (int i = 0; i < swapChainImages.size(); ++i) {
+            if (!createBuffer(bufferSize, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]))
+                return false;
+        }
+        return true;
+    }
+
     /** \brief Create a command buffer for each framebuffer.
      *
      * Need a buffer for each framebuffer. This also currently records the draw operations too.
@@ -1138,6 +1179,8 @@ namespace graphics {
     void cleanupSwapChain() {
         for (size_t i = 0; i < swapChainFramebuffers.size(); i++) {
             vkDestroyFramebuffer(logicalDevice, swapChainFramebuffers[i], nullptr);
+            vkDestroyBuffer(logicalDevice, uniformBuffers[i], nullptr);
+            vkFreeMemory(logicalDevice, uniformBuffersMemory[i], nullptr);
         }
 
         vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
@@ -1173,8 +1216,26 @@ namespace graphics {
         createImageViews(); // because of new images and image sizes
         createRenderPass(); // because this relies on the image formats (rare that it changes)
         createGraphicsPipeline(); // viewport and scissor size change (could handle w/dynamic state)
+        createUniformBuffers(); // because the number of swap chain images could change someday
         createFramebuffers(); // directly relies on swap images
         createCommandBuffers(); // directly relies on swap images
+    }
+
+    void updateUniformBuffer(uint32_t currentImage) {
+        static auto startTime = std::chrono::high_resolution_clock::now();
+        auto currentTime = std::chrono::high_resolution_clock::now();
+        float time = std::chrono::duration<float, std::chrono::seconds::period>(currentTime - startTime).count();
+
+        UBO ubo = {};
+        ubo.model = glm::rotate(glm::mat4(1.0f), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.view = glm::lookAt(glm::vec3(2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+        ubo.proj = glm::perspective(glm::radians(45.0f), swapChainExtent.width / (float) swapChainExtent.height, 0.1f, 10.0f);
+        ubo.proj[1][1] *= -1;
+
+        void* data;
+        vkMapMemory(logicalDevice, uniformBuffersMemory[currentImage], 0, sizeof(ubo), 0, &data);
+        memcpy(data, &ubo, sizeof(ubo));
+        vkUnmapMemory(logicalDevice, uniformBuffersMemory[currentImage]);
     }
 
     bool drawFrame() {
@@ -1191,6 +1252,8 @@ namespace graphics {
         } else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
             return false;
         }
+
+        updateUniformBuffer(imageIndex);
         
         // queue submission and synchronization done with VkSubmitInfo
         VkSubmitInfo submitInfo = {};
