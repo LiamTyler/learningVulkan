@@ -99,6 +99,8 @@ namespace graphics {
     VkDeviceMemory indexBufferMemory;
     std::vector<VkBuffer> uniformBuffers;
     std::vector<VkDeviceMemory> uniformBuffersMemory;
+    VkDescriptorPool descriptorPool;
+    std::vector<VkDescriptorSet> descriptorSets;
 
     // helper functions
     namespace {
@@ -430,7 +432,7 @@ namespace graphics {
             createLogicalDevice() && createSwapChain() && createImageViews() && createRenderPass() &&
             createDescriptorSetLayout() && createGraphicsPipeline() && createFramebuffers() &&
             createCommandPool() && createVertexBuffer() && createIndexBuffer() && createUniformBuffers() &&
-            createCommandBuffers() && createSyncObjects())
+            createDescriptorPool() && createDescriptorSets() && createCommandBuffers() && createSyncObjects())
             return true;
 
         return false;
@@ -817,10 +819,10 @@ namespace graphics {
     bool createDescriptorSetLayout() {
         VkDescriptorSetLayoutBinding uboLayoutBinding = {};
         uboLayoutBinding.binding = 0; // must match the layout(uniform = _) in the shader
+        uboLayoutBinding.descriptorCount = 1;
         uboLayoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        uboLayoutBinding.binding = 1; // not an array (same thing as 1 element array)
-        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; // which stages it is accessed
         uboLayoutBinding.pImmutableSamplers = nullptr; // only relevent for image related stuff
+        uboLayoutBinding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT; // which stages it is accessed
         VkDescriptorSetLayoutCreateInfo layoutInfo = {};
         layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
         layoutInfo.bindingCount = 1;
@@ -902,7 +904,7 @@ namespace graphics {
         rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
         rasterizer.lineWidth = 1.0f; // anything thicker than 1 needs the wideLines GPU feature
         rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-        rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+        rasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
         // can also alter the depth values, which could help for shadow mapping
         rasterizer.depthBiasEnable = VK_FALSE;
@@ -946,7 +948,6 @@ namespace graphics {
         pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
         pipelineLayoutInfo.setLayoutCount = 1;
         pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
-        pipelineLayoutInfo.pushConstantRangeCount = 0;
 
         if (vkCreatePipelineLayout(logicalDevice, &pipelineLayoutInfo, nullptr, &pipelineLayout) != VK_SUCCESS)
             return false;
@@ -1089,6 +1090,58 @@ namespace graphics {
         return true;
     }
 
+    /** Descriptors cant be created directly. Like command buffers, they must be allocated from
+     * a pool.
+     */
+    bool createDescriptorPool() {
+        VkDescriptorPoolSize poolSize = {};
+        poolSize.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        poolSize.descriptorCount = swapChainImages.size(); // one descriptor per frame
+
+        VkDescriptorPoolCreateInfo poolInfo = {};
+        poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+        poolInfo.poolSizeCount = 1;
+        poolInfo.pPoolSizes = &poolSize;
+        poolInfo.maxSets = swapChainImages.size();
+
+        return vkCreateDescriptorPool(logicalDevice, &poolInfo, nullptr, &descriptorPool) == VK_SUCCESS;
+    }
+
+    bool createDescriptorSets() {
+        // specify the pool to allocate from, number of sets, and the layout of them
+        std::vector<VkDescriptorSetLayout> layouts(swapChainImages.size(), descriptorSetLayout);
+        VkDescriptorSetAllocateInfo allocInfo = {};
+        allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        allocInfo.descriptorPool = descriptorPool;
+        allocInfo.descriptorSetCount = swapChainImages.size();
+        allocInfo.pSetLayouts = layouts.data();
+
+        descriptorSets.resize(swapChainImages.size());
+        if (vkAllocateDescriptorSets(logicalDevice, &allocInfo, descriptorSets.data()) != VK_SUCCESS)
+            return false;
+
+        // allocate now, but need to configure and populate them
+        for (size_t i = 0; i < swapChainImages.size(); ++i) {
+            VkDescriptorBufferInfo bufferInfo = {};
+            bufferInfo.buffer = uniformBuffers[i];
+            bufferInfo.offset = 0;
+            bufferInfo.range = sizeof(UBO);
+
+            VkWriteDescriptorSet descriptorWrite = {};
+            descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptorWrite.dstSet = descriptorSets[i]; // set to update
+            descriptorWrite.dstBinding = 0; // binding of set
+            descriptorWrite.dstArrayElement = 0; // index into array (0, since we have no array)
+            descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptorWrite.descriptorCount = 1;
+            descriptorWrite.pBufferInfo = &bufferInfo;
+
+            vkUpdateDescriptorSets(logicalDevice, 1, &descriptorWrite, 0, nullptr);
+        }
+
+        return true;
+    }
+
     /** \brief Create a command buffer for each framebuffer.
      *
      * Need a buffer for each framebuffer. This also currently records the draw operations too.
@@ -1129,13 +1182,15 @@ namespace graphics {
 
             // submit commands: start pass, bind pipeline, draw, end pass
             vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-            vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-            VkBuffer vertexBuffers[] = {vertexBuffer};
-            VkDeviceSize offsets[] = {0};
-            vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
-            vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
-            // vkCmdDraw(commandBuffers[i], vertices.size(), 1, 0, 0);
-            vkCmdDrawIndexed(commandBuffers[i], indices.size(), 1, 0, 0, 0);
+                vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+                VkBuffer vertexBuffers[] = {vertexBuffer};
+                VkDeviceSize offsets[] = {0};
+                vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, vertexBuffers, offsets);
+                vkCmdBindDescriptorSets(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        pipelineLayout, 0, 1, &descriptorSets[i], 0, nullptr);
+                vkCmdBindIndexBuffer(commandBuffers[i], indexBuffer, 0, VK_INDEX_TYPE_UINT16);
+                // vkCmdDraw(commandBuffers[i], vertices.size(), 1, 0, 0);
+                vkCmdDrawIndexed(commandBuffers[i], indices.size(), 1, 0, 0, 0);
             vkCmdEndRenderPass(commandBuffers[i]);
             if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS)
                 return false;
@@ -1182,6 +1237,7 @@ namespace graphics {
             vkDestroyBuffer(logicalDevice, uniformBuffers[i], nullptr);
             vkFreeMemory(logicalDevice, uniformBuffersMemory[i], nullptr);
         }
+        vkDestroyDescriptorPool(logicalDevice, descriptorPool, nullptr);
 
         vkFreeCommandBuffers(logicalDevice, commandPool, static_cast<uint32_t>(commandBuffers.size()), commandBuffers.data());
 
@@ -1217,6 +1273,8 @@ namespace graphics {
         createRenderPass(); // because this relies on the image formats (rare that it changes)
         createGraphicsPipeline(); // viewport and scissor size change (could handle w/dynamic state)
         createUniformBuffers(); // because the number of swap chain images could change someday
+        createDescriptorPool(); // relies on number of swap images
+        createDescriptorSets(); // relies on number of swap images
         createFramebuffers(); // directly relies on swap images
         createCommandBuffers(); // directly relies on swap images
     }

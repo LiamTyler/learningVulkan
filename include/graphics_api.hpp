@@ -28,6 +28,8 @@ namespace graphics {
     bool createVertexBuffer();
     bool createIndexBuffer();
     bool createUniformBuffers();
+    bool createDescriptorPool();
+    bool createDescriptorSets();
     bool createCommandBuffers();
     bool createSyncObjects();
     void cleanupSwapChain();
@@ -81,6 +83,8 @@ namespace graphics {
     extern VkDeviceMemory indexBufferMemory;
     extern std::vector<VkBuffer> uniformBuffers;
     extern std::vector<VkDeviceMemory> uniformBuffersMemory;
+    extern VkDescriptorPool descriptorPool;
+    extern std::vector<VkDescriptorSet> descriptorSets;
 
 
 } // namespace graphics
